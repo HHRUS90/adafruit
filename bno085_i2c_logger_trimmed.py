@@ -2,19 +2,19 @@
 """
 bno085_i2c_logger_trimmed.py – log accel/gyro/mag over I²C
 with optional live plot, auto‑named files, optional rate printing,
-and a flag to disable plotting for maximum throughput.
+and a flag to enable plotting (default: no plot, max‑throughput mode).
 
 Features
 --------
 * Raspberry‑Pi hardware I²C (SDA = GPIO2, SCL = GPIO3) at 400 kHz.
 * Records accelerometer, gyroscope and magnetometer + a timestamp.
 * Auto‑saves to CSV *or* TSV (toggle with USE_CSV flag at the top).
-* Optional live Matplotlib plot (enabled with --no‑plot to disable).
-* Optional --duration <seconds> argument to stop automatically.
+* Optional live Matplotlib plot – **enabled only with `--plot`**.
+* Optional `--duration <seconds>` argument to stop automatically.
 * Each run creates a file named 20260929‑T1428.csv (or .txt) – the
   date‑time when the script starts.
-* Every 200 ms the script can print the measured sample‑rate (Hz);
-  disable it with the new --no‑rate flag.
+* Every 400 ms the script can print the measured sample‑rate (Hz);
+  disable it with the `--no-rate` flag.
 * Graceful cleanup on Ctrl‑C, SIGTERM, or timer expiry.
 
 Author: <your‑name>
@@ -46,28 +46,28 @@ USE_CSV = True   # CSV → .csv (Excel‑friendly)
 # --------------------------------------------------------------
 parser = argparse.ArgumentParser(
     description="Log BNO085 accel/gyro/mag over I2C. "
-                "Optional flags: --duration, --no-plot, --no-rate."
+                "Optional flags: --duration, --plot, --no-rate."
 )
 parser.add_argument(
     "--duration",
     type=float,
-    help="Run time in seconds (e.g. 1800 for 30 min). Omit for infinite run.",
+    help="Run time in seconds (e.g. 1800 for 30 min). Omit for infinite run."
 )
 parser.add_argument(
-    "--no-plot",
+    "--plot",
     action="store_true",
-    help="Disable live Matplotlib plot (max‑throughput mode).",
+    help="Enable live Matplotlib plot (disabled by default for max throughput)."
 )
 parser.add_argument(
     "--no-rate",
     action="store_true",
-    help="Do NOT print the sample‑rate to the console (enabled by default).",
+    help="Do NOT print the sample‑rate to the console (enabled by default)."
 )
 
 args = parser.parse_args()
 RUN_FOR_SECONDS = args.duration               # None → run forever
-USE_PLOT        = not args.no_plot            # default True, overridden by flag
-PRINT_RATE      = not args.no_rate            # default True, overridden by flag
+USE_PLOT        = args.plot                    # **default is False**
+PRINT_RATE      = not args.no_rate            # default True, can be disabled
 
 # --------------------------------------------------------------
 # 3️⃣  CSV / TSV header (only the three raw streams)
@@ -115,10 +115,10 @@ i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
 print("[INFO] Creating BNO085 driver (I2C) …")
 bno = adafruit_bno08x.i2c.BNO08X_I2C(i2c)
 
-# Configure firmware to maximize data throughput using microsecond intervals
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER) # 500 Hz max
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)     # 400 Hz max
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER) # 100 Hz max
+# Enable the three raw reports we care about
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
 
 # --------------------------------------------------------------
 # 6️⃣  Open a fresh log file (auto‑named by start time)
@@ -129,30 +129,29 @@ log_file, log_writer = _open_log_file(log_path)
 print(f"[INFO] Logging to {log_path}")
 
 # --------------------------------------------------------------
-# 7️⃣  Sample‑rate statistics (updated every 0.2 s)
+# 7️⃣  Sample‑rate statistics (updated every 0.4 s)
 # --------------------------------------------------------------
 sample_times = collections.deque(maxlen=2000)   # store recent timestamps
 LAST_RATE_PRINT = time.time()
-RATE_PRINT_INTERVAL = 0.2                     # seconds
+RATE_PRINT_INTERVAL = 0.4                     # seconds (now prints twice per sec)
 
 def _maybe_print_rate():
     """Print current sample rate (Hz) if the interval has elapsed and printing is enabled."""
-    global LAST_RATE_PRINT  # 💡 Fixed: Declared at the very top of the function scope
-    
+    global LAST_RATE_PRINT
     if not PRINT_RATE:
         return
-        
+
     now = time.time()
     if now - LAST_RATE_PRINT >= RATE_PRINT_INTERVAL:
-        # Keep only timestamps from the last second for a smoother estimate
+        # keep only timestamps from the last second for a smoother estimate
         while sample_times and (now - sample_times[0] > 1.0):
             sample_times.popleft()
-            
+
         if sample_times:
             elapsed = now - sample_times[0]
             hz = len(sample_times) / elapsed if elapsed > 0 else 0.0
             print(f"[INFO] Current sample rate ≈ {hz:.1f} Hz")
-            
+
         LAST_RATE_PRINT = now
 
 # --------------------------------------------------------------
@@ -173,10 +172,10 @@ if USE_PLOT:
     line_az, = ax.plot([], [], label="Az", color="#5555ff")
     ax.legend(loc="upper right")
 else:
-    # Still need a start‑time reference for timestamps
+    # Even without a plot we still need a reference for timestamps.
     time_vals = None
 
-start_time = time.time()           # for timestamps and plot X‑axis
+start_time = time.time()           # for timestamps and (optional) plot X‑axis
 run_start   = start_time           # for the optional duration timer
 
 # --------------------------------------------------------------
@@ -253,10 +252,10 @@ while True:
         line_az.set_data(time_vals, az_vals)
         ax.set_xlim(max(0, now - MAX_SECONDS), now + 0.5)
 
-        # A tiny pause keeps the GUI responsive; it adds virtually no overhead.
+        # Minimal pause to keep the GUI responsive
         plt.pause(0.001)
 
-    # ---- 5️⃣  Print sample rate (every 0.2 s) ----------------------------
+    # ---- 5️⃣  Print sample rate (every 0.4 s) ----------------------------
     _maybe_print_rate()
 
     # ---- 6️⃣  Duration timer check ---------------------------------------
