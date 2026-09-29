@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-bno085_i2c_logger_trimmed.py – log accel/gyro/mag over I²C
-with optional live plot, auto‑named files, optional rate printing,
-and a flag to enable plotting (default: no plot, max‑throughput mode).
+bno085_i2c_logger_trimmed.py – log a single sensor (accel, gyro or mag) over I²C
 
 Features
 --------
 * Raspberry‑Pi hardware I²C (SDA = GPIO2, SCL = GPIO3) at 400 kHz.
-* Records accelerometer, gyroscope and magnetometer + a timestamp.
-* Auto‑saves to CSV *or* TSV (toggle with USE_CSV flag at the top).
+* User selects ONE measurement (accelerometer, gyroscope or magnetometer) via
+  a command‑line flag.  The script enables **only that report** and sets the
+  report period to the maximum rate allowed by the datasheet:
+      – Accel  : 500 Hz  (2 ms → 2 000 µs)
+      – Gyro   : 400 Hz  (2.5 ms → 2 500 µs)
+      – Mag    : 100 Hz  (10 ms → 10 000 µs)
+* Auto‑saves to CSV *or* TSV (toggle with the USE_CSV constant at the top).
 * Optional live Matplotlib plot – **enabled only with `--plot`**.
 * Optional `--duration <seconds>` argument to stop automatically.
-* Each run creates a file named 20260929‑T1428.csv (or .txt) – the
-  date‑time when the script starts.
+* Log files are named `<measurement>_YYYYMMDD_HHMMSS.<ext>` (e.g.
+  `bno085_i2c_accel_20260928_145408.csv`).
 * Every 400 ms the script can print the measured sample‑rate (Hz);
-  disable it with the `--no-rate` flag.
+  disable it with `--no‑rate`.
 * Graceful cleanup on Ctrl‑C, SIGTERM, or timer expiry.
 
 Author: <your‑name>
@@ -45,9 +48,17 @@ USE_CSV = True   # CSV → .csv (Excel‑friendly)
 # 2️⃣  Command‑line arguments
 # --------------------------------------------------------------
 parser = argparse.ArgumentParser(
-    description="Log BNO085 accel/gyro/mag over I2C. "
+    description="Log ONE BNO085 measurement (accel, gyro or mag) over I2C. "
                 "Optional flags: --duration, --plot, --no-rate."
 )
+
+# ---- measurement selection – mutually exclusive & required -------------
+meas_group = parser.add_mutually_exclusive_group(required=True)
+meas_group.add_argument("--accel", action="store_true", help="Log accelerometer only (max 500 Hz).")
+meas_group.add_argument("--gyro",  action="store_true", help="Log gyroscope only (max 400 Hz).")
+meas_group.add_argument("--mag",   action="store_true", help="Log magnetometer only (max 100 Hz).")
+
+# ---- other optional flags -------------------------------------------
 parser.add_argument(
     "--duration",
     type=float,
@@ -66,27 +77,44 @@ parser.add_argument(
 
 args = parser.parse_args()
 RUN_FOR_SECONDS = args.duration               # None → run forever
-USE_PLOT        = args.plot                    # **default is False**
-PRINT_RATE      = not args.no_rate            # default True, can be disabled
+USE_PLOT        = args.plot                    # Default: False (max‑throughput)
+PRINT_RATE      = not args.no_rate            # Default: True
 
 # --------------------------------------------------------------
-# 3️⃣  CSV / TSV header (only the three raw streams)
+# 3️⃣  Determine which measurement we are logging
 # --------------------------------------------------------------
-CSV_HEADER = [
-    "timestamp",
-    "accel_x", "accel_y", "accel_z",
-    "gyro_x",  "gyro_y",  "gyro_z",
-    "mag_x",   "mag_y",   "mag_z",
-]
+if args.accel:
+    MEAS_NAME   = "accel"
+    REPORT_TYPE = adafruit_bno08x.BNO_REPORT_ACCELEROMETER
+    MAX_HZ      = 500
+    HEADER_FIELDS = ["accel_x", "accel_y", "accel_z"]
+elif args.gyro:
+    MEAS_NAME   = "gyro"
+    REPORT_TYPE = adafruit_bno08x.BNO_REPORT_GYROSCOPE
+    MAX_HZ      = 400
+    HEADER_FIELDS = ["gyro_x", "gyro_y", "gyro_z"]
+else:  # args.mag
+    MEAS_NAME   = "mag"
+    REPORT_TYPE = adafruit_bno08x.BNO_REPORT_MAGNETOMETER
+    MAX_HZ      = 100
+    HEADER_FIELDS = ["mag_x", "mag_y", "mag_z"]
+
+# Compute the report period in micro‑seconds (µs)
+REPORT_PERIOD_US = int(1_000_000 / MAX_HZ)   # e.g. 500 Hz → 2000 µs
 
 # --------------------------------------------------------------
-# 4️⃣  Helper functions
+# 4️⃣  CSV / TSV header (timestamp + chosen measurement fields)
+# --------------------------------------------------------------
+CSV_HEADER = ["timestamp"] + HEADER_FIELDS
+
+# --------------------------------------------------------------
+# 5️⃣  Helper functions
 # --------------------------------------------------------------
 def _make_log_path() -> Path:
-    """Create a unique file name like 20260929‑T1428.csv based on start time."""
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%TH%M")
+    """Create a unique file name like bno085_i2c_<meas>_YYYYMMDD_HHMMSS.<ext>."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     suffix = "csv" if USE_CSV else "txt"
-    return LOG_ROOT / f"bno085_i2c_{stamp}.{suffix}"
+    return LOG_ROOT / f"bno085_i2c_{MEAS_NAME}_{stamp}.{suffix}"
 
 def _open_log_file(path: Path):
     """Open the log file line‑buffered; return (handle, csv.writer|None)."""
@@ -107,7 +135,7 @@ def _write_row_txt(f, row):
     f.write("\t".join(str(v) for v in row) + "\n")
 
 # --------------------------------------------------------------
-# 5️⃣  I²C bus & sensor initialization (enable raw streams)
+# 6️⃣  I²C bus & sensor initialization (enable only the chosen report)
 # --------------------------------------------------------------
 print("[INFO] Initialising I²C …")
 i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
@@ -115,28 +143,27 @@ i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
 print("[INFO] Creating BNO085 driver (I2C) …")
 bno = adafruit_bno08x.i2c.BNO08X_I2C(i2c)
 
-# Enable the three raw reports we care about
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+# Enable the single report the user asked for and set its maximum period
+bno.enable_feature(REPORT_TYPE)
+bno.set_report_period(REPORT_TYPE, REPORT_PERIOD_US)
 
 # --------------------------------------------------------------
-# 6️⃣  Open a fresh log file (auto‑named by start time)
+# 7️⃣  Open a fresh log file (auto‑named by start time & measurement)
 # --------------------------------------------------------------
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 log_path = _make_log_path()
 log_file, log_writer = _open_log_file(log_path)
-print(f"[INFO] Logging to {log_path}")
+print(f"[INFO] Logging {MEAS_NAME.upper()} data to {log_path}")
 
 # --------------------------------------------------------------
-# 7️⃣  Sample‑rate statistics (updated every 0.4 s)
+# 8️⃣  Sample‑rate statistics (updated every 0.4 s)
 # --------------------------------------------------------------
 sample_times = collections.deque(maxlen=2000)   # store recent timestamps
 LAST_RATE_PRINT = time.time()
-RATE_PRINT_INTERVAL = 0.4                     # seconds (now prints twice per sec)
+RATE_PRINT_INTERVAL = 0.4                     # seconds (twice per second)
 
 def _maybe_print_rate():
-    """Print current sample rate (Hz) if the interval has elapsed and printing is enabled."""
+    """Print current sample rate (Hz) if interval elapsed and printing enabled."""
     global LAST_RATE_PRINT
     if not PRINT_RATE:
         return
@@ -150,36 +177,45 @@ def _maybe_print_rate():
         if sample_times:
             elapsed = now - sample_times[0]
             hz = len(sample_times) / elapsed if elapsed > 0 else 0.0
-            print(f"[INFO] Current sample rate ≈ {hz:.1f} Hz")
-
+            print(f"[INFO] Current {MEAS_NAME} sample rate ≈ {hz:.1f} Hz")
         LAST_RATE_PRINT = now
 
 # --------------------------------------------------------------
-# 8️⃣  Plot set‑up (only if USE_PLOT is True)
+# 9️⃣  Plot set‑up (only if USE_PLOT is True)
 # --------------------------------------------------------------
 if USE_PLOT:
     plt.style.use("seaborn-v0_8-darkgrid")
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title("Live Accelerometer (m/s²)")
+    ax.set_title(f"Live {MEAS_NAME.capitalize()} (3 axes)")
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Accel (m/s²)")
-    ax.set_ylim(-20, 20)               # adjust if you expect higher g‑forces
+    ax.set_ylabel(f"{MEAS_NAME.capitalize()}")
+
+    # Choose sensible Y‑limits per sensor type
+    if MEAS_NAME == "accel":
+        ax.set_ylim(-20, 20)          # m/s²
+    elif MEAS_NAME == "gyro":
+        ax.set_ylim(-500, 500)        # rad/s (wide enough for most rotations)
+    else:  # mag
+        ax.set_ylim(-2000, 2000)      # µT (typical earth field range)
+
     ax.grid(True)
 
-    time_vals, ax_vals, ay_vals, az_vals = [], [], [], []
-    line_ax, = ax.plot([], [], label="Ax", color="#ff5555")
-    line_ay, = ax.plot([], [], label="Ay", color="#55ff55")
-    line_az, = ax.plot([], [], label="Az", color="#5555ff")
+    time_vals = []
+    v1_vals, v2_vals, v3_vals = [], [], []   # three axes
+
+    line1, = ax.plot([], [], label=f"{MEAS_NAME[0].upper()}1", color="#ff5555")
+    line2, = ax.plot([], [], label=f"{MEAS_NAME[0].upper()}2", color="#55ff55")
+    line3, = ax.plot([], [], label=f"{MEAS_NAME[0].upper()}3", color="#5555ff")
     ax.legend(loc="upper right")
 else:
-    # Even without a plot we still need a reference for timestamps.
+    # We still need a reference start‑time for timestamps.
     time_vals = None
 
-start_time = time.time()           # for timestamps and (optional) plot X‑axis
+start_time = time.time()           # for timestamps (and plot X‑axis if used)
 run_start   = start_time           # for the optional duration timer
 
 # --------------------------------------------------------------
-# 9️⃣  Graceful cleanup helpers
+# 🔟  Graceful cleanup helpers
 # --------------------------------------------------------------
 def _cleanup_and_exit():
     """Flush/close the log file, close the plot (if any), and exit."""
@@ -204,61 +240,59 @@ signal.signal(signal.SIGTERM, _signal_handler)   # systemd stop
 # 🔄  Main acquisition loop – works with or without plotting
 # --------------------------------------------------------------
 while True:
-    # ---- 1️⃣  Pull the three raw reports (non‑blocking) --------------------
-    accel = bno.acceleration   # (x, y, z) – m/s²
-    gyro  = bno.gyro           # (x, y, z) – rad/s
-    mag   = bno.magnetic       # (x, y, z) – µT
+    # ---- 1️⃣  Pull the selected raw report (non‑blocking) --------------------
+    if MEAS_NAME == "accel":
+        data = bno.acceleration   # (x, y, z) – m/s²
+    elif MEAS_NAME == "gyro":
+        data = bno.gyro           # (x, y, z) – rad/s
+    else:
+        data = bno.magnetic       # (x, y, z) – µT
 
-    # If no fresh packet, just continue (still allow rate printing)
-    if accel is None:
+    # If no fresh packet, just loop (still allow rate printing)
+    if data is None:
         _maybe_print_rate()
         continue
 
-    # ---- 2️⃣  Assemble timestamped CSV/TSV row ---------------------------
+    # ---- 2️⃣  Assemble timestamped CSV/TSV row -----------------------------
     now = time.time() - start_time
     ts  = datetime.datetime.now().isoformat()
 
-    row = [
-        ts,
-        accel[0], accel[1], accel[2],
-        gyro[0],  gyro[1],  gyro[2],
-        mag[0],   mag[1],   mag[2],
-    ]
+    row = [ts, data[0], data[1], data[2]]
 
     if USE_CSV:
         _write_row_csv(log_writer, row)
     else:
         _write_row_txt(log_file, row)
 
-    # ---- 3️⃣  Record sample time for rate calculation --------------------
+    # ---- 3️⃣  Record sample time for rate calculation ----------------------
     sample_times.append(time.time())
 
-    # ---- 4️⃣  Plot update (if enabled) -----------------------------------
+    # ---- 4️⃣  Plot update (if enabled) ------------------------------------
     if USE_PLOT:
         time_vals.append(now)
-        ax_vals.append(accel[0])
-        ay_vals.append(accel[1])
-        az_vals.append(accel[2])
+        v1_vals.append(data[0])
+        v2_vals.append(data[1])
+        v3_vals.append(data[2])
 
-        # Trim buffers to keep only the last MAX_SECONDS seconds
+        # Trim buffers to the last MAX_SECONDS seconds
         while time_vals and (now - time_vals[0] > MAX_SECONDS):
             time_vals.pop(0)
-            ax_vals.pop(0)
-            ay_vals.pop(0)
-            az_vals.pop(0)
+            v1_vals.pop(0)
+            v2_vals.pop(0)
+            v3_vals.pop(0)
 
-        line_ax.set_data(time_vals, ax_vals)
-        line_ay.set_data(time_vals, ay_vals)
-        line_az.set_data(time_vals, az_vals)
+        line1.set_data(time_vals, v1_vals)
+        line2.set_data(time_vals, v2_vals)
+        line3.set_data(time_vals, v3_vals)
         ax.set_xlim(max(0, now - MAX_SECONDS), now + 0.5)
 
-        # Minimal pause to keep the GUI responsive
+        # Minimal pause – keeps GUI responsive with virtually no overhead.
         plt.pause(0.001)
 
-    # ---- 5️⃣  Print sample rate (every 0.4 s) ----------------------------
+    # ---- 5️⃣  Print sample rate (every 0.4 s) -------------------------------
     _maybe_print_rate()
 
-    # ---- 6️⃣  Duration timer check ---------------------------------------
+    # ---- 6️⃣  Duration timer check -----------------------------------------
     if RUN_FOR_SECONDS is not None:
         if (time.time() - run_start) >= RUN_FOR_SECONDS:
             print(f"\n[INFO] Run‑time limit of {RUN_FOR_SECONDS:.1f}s reached – stopping.")
