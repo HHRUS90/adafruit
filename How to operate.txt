@@ -1,0 +1,131 @@
+-Enable the Raspberry‑Pi UART
+sudo raspi-config
+
+-Install required Python packages (run once):
+sudo apt-get update
+sudo apt-get install -y python3-pip python3-venv git
+python3 -m venv bno085-env
+source bno085-env/bin/activate
+pip install --upgrade pip
+pip install adafruit-circuitpython-bno08x pyserial matplotlib pandas
+
+
+-Save the script as bno085_uart_logger.py in your home folder (or any convenient directory).
+-Make it executable:
+chmod +x bno085_uart_logger.py
+
+-Activate the virtual environment you created earlier (if you closed the terminal):
+source ~/bno085-env/bin/activate
+
+-Execute the script:
+./bno085_uart_logger.py
+
+_______________________________________
+
+If you want the script to run automatically every time the Pi boots, the most reliable method on Raspbian / Raspberry Pi OS is a systemd service.
+
+1️⃣ Put the script somewhere permanent
+# Example location – adjust as you like
+sudo mkdir -p /opt/bno085
+sudo cp bno085_uart_logger.py /opt/bno085/
+sudo chmod +x /opt/bno085/bno085_uart_logger.py
+
+Make sure the virtual‑environment you created earlier is activated inside the service (or install the required packages system‑wide). The easiest way is to call the script inside the venv:
+
+# Activate the venv and note the full path to the Python binary
+source /home/pi/bno085-env/bin/activate
+which python   # → /home/pi/bno085-env/bin/python
+
+Assume the interpreter lives at /home/pi/bno085-env/bin/python.
+
+2️⃣ Create a systemd unit file
+sudo nano /etc/systemd/system/bno085-logger.service
+
+Paste the following (replace <USERNAME> and paths if different):
+
+[Unit]
+Description=Adafruit BNO085 full‑report logger
+After=network.target
+Wants=network.target
+
+[Service]
+# Run as the regular user (so it can write to /home/pi/... and to the venv)
+User=pi
+Group=pi
+
+# Full path to the interpreter inside the virtual environment
+ExecStart=/home/pi/bno085-env/bin/python /opt/bno085/bno085_uart_logger.py
+
+# Keep the service alive if it crashes
+Restart=on-failure
+RestartSec=5
+
+# Optional: limit CPU / I/O if you ever need it
+#CPUQuota=80%
+#IOWeight=500
+
+[Install]
+WantedBy=multi-user.target
+
+3️⃣ Enable & start the service
+sudo systemctl daemon-reload                    # reload unit files
+sudo systemctl enable bno085-logger.service     # start on every boot
+sudo systemctl start bno085-logger.service      # start right now
+
+You can check the live log to make sure everything is working:
+
+journalctl -u bno085-logger.service -f
+
+When the service starts, you’ll see the [INFO] Logging to … line in the journal, and a new file will appear under ~/logs/ (or wherever LOG_ROOT points). Every subsequent power‑cycle creates a new file with its own timestamped name, so you’ll have a tidy series of logs automatically.
+
+______________________________________________
+
+
+Running the script manually for a fixed period
+# Record for exactly 10 minutes (600 seconds) and then exit automatically
+python3 bno085_uart_logger.py --duration 600
+
+________________________________________________
+Running the script automatically on power‑up for a fixed period
+When you launch the script from a systemd service you can embed the same --duration flag in the ExecStart= line, e.g.:
+
+# /etc/systemd/system/bno085-logger.service
+[Unit]
+Description=Adafruit BNO085 full‑report logger (auto‑stop after 30 min)
+After=network.target
+Wants=network.target
+
+[Service]
+User=pi
+Group=pi
+# <-- adjust the path to the virtual‑env interpreter if yours differs
+ExecStart=/home/pi/bno085-env/bin/python /opt/bno085/bno085_uart_logger.py --duration 1800
+# (1800 s = 30 min)
+
+# Restart only if the program crashes; we *don’t* want it to restart automatically
+# after the normal timeout because the intention is “run once, stop”.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+
+Steps to make it work
+
+Place the script (the version above) at /opt/bno085/bno085_uart_logger.py
+(sudo mkdir -p /opt/bno085 && sudo cp … /opt/bno085/).
+
+Make sure the virtual environment you created earlier contains the required packages and note its Python binary path (usually /home/pi/bno085-env/bin/python).
+
+Create the systemd unit (as shown above) and reload systemd:
+
+sudo systemctl daemon-reload
+sudo systemctl enable bno085-logger.service   # start on every boot
+sudo systemctl start bno085-logger.service    # test now
+
+Check the log (journal) – you should see the “Run‑time limit …” line and, after the requested number of seconds, a message like:
+
+[INFO] Run-time limit of 1800.0s reached – stopping.
+
+A new CSV (or TXT) file will be left in ~/logs/ with a timestamped name.
+
+If you ever want it to run indefinitely on boot, simply delete the --duration … part from the ExecStart= line and reload (systemctl daemon-reload). The script will then behave exactly like the original “run until stopped”.
