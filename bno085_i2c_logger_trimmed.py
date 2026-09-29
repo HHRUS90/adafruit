@@ -115,10 +115,10 @@ i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
 print("[INFO] Creating BNO085 driver (I2C) …")
 bno = adafruit_bno08x.i2c.BNO08X_I2C(i2c)
 
-# Enable the three raw reports we care about
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-bno.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+# Configure firmware to maximize data throughput using microsecond intervals
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER) # 500 Hz max
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)     # 400 Hz max
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER) # 100 Hz max
 
 # --------------------------------------------------------------
 # 6️⃣  Open a fresh log file (auto‑named by start time)
@@ -137,18 +137,22 @@ RATE_PRINT_INTERVAL = 0.2                     # seconds
 
 def _maybe_print_rate():
     """Print current sample rate (Hz) if the interval has elapsed and printing is enabled."""
+    global LAST_RATE_PRINT  # 💡 Fixed: Declared at the very top of the function scope
+    
     if not PRINT_RATE:
         return
+        
     now = time.time()
     if now - LAST_RATE_PRINT >= RATE_PRINT_INTERVAL:
         # Keep only timestamps from the last second for a smoother estimate
         while sample_times and (now - sample_times[0] > 1.0):
             sample_times.popleft()
+            
         if sample_times:
             elapsed = now - sample_times[0]
             hz = len(sample_times) / elapsed if elapsed > 0 else 0.0
             print(f"[INFO] Current sample rate ≈ {hz:.1f} Hz")
-        global LAST_RATE_PRINT
+            
         LAST_RATE_PRINT = now
 
 # --------------------------------------------------------------
