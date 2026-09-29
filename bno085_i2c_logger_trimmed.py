@@ -98,9 +98,9 @@ print("[INFO] Creating BNO085 driver (I2C) …")
 bno = adafruit_bno08x.i2c.BNO08X_I2C(i2c)
 
 # Enable the three raw reports we care about
-bno.enable_feature(adafruit_bno08x.ACCELEROMETER)
-bno.enable_feature(adafruit_bno08x.GYROSCOPE)
-bno.enable_feature(adafruit_bno08x.MAGNETOMETER)
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+bno.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
 
 # --------------------------------------------------------------
 # 6️⃣  Open a fresh log file (one per power‑up / run)
@@ -113,7 +113,7 @@ print(f"[INFO] Logging to {log_path}")
 # --------------------------------------------------------------
 # 7️⃣  Live plot set‑up (accelerometer X/Y/Z)
 # --------------------------------------------------------------
-plt.style.use("seaborn-darkgrid")
+plt.style.use("seaborn-v0_8-darkgrid")
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.set_title("Live Accelerometer (m/s²)")
 ax.set_xlabel("Time (s)")
