@@ -11,13 +11,16 @@ Features
       – Accel  : 500 Hz  (2 ms → 2 000 µs)
       – Gyro   : 400 Hz  (2.5 ms → 2 500 µs)
       – Mag    : 100 Hz  (10 ms → 10 000 µs)
+* User can also set the **accelerometer and gyroscope full‑scale ranges**
+  in the “User settings” section (see the constants `ACCEL_RANGE` and
+  `GYRO_RANGE` below).
 * Auto‑saves to CSV *or* TSV (toggle with the USE_CSV constant at the top).
 * Optional live Matplotlib plot – **enabled only with `--plot`**.
 * Optional `--duration <seconds>` argument to stop automatically.
 * Log files are named `<measurement>_YYYYMMDD_HHMMSS.<ext>` (e.g.
   `bno085_i2c_accel_20260928_145408.csv`).
 * Every 400 ms the script can print the measured sample‑rate (Hz);
-  disable it with `--no‑rate`.
+  disable it with `--no-rate`.
 * Graceful cleanup on Ctrl‑C, SIGTERM, or timer expiry.
 
 Author: <your‑name>
@@ -40,9 +43,19 @@ I2C_FREQUENCY = 400_000            # 400 kHz – Pi fast‑mode (max supported
 MAX_SECONDS   = 30                 # seconds shown on the live plot (if enabled)
 LOG_ROOT      = Path.cwd() / "logs"
 
-# Choose ONE of the two output formats (comment the one you don’t want)
+# ---------- Output format ----------
 USE_CSV = True   # CSV → .csv (Excel‑friendly)
 #USE_CSV = False # TSV → .txt (a little smaller)
+
+# ---------- Full‑scale range selections ----------
+# Choose ONE of the accelerometer ranges (the driver constants are listed below)
+#   ACCEL_RANGE_2G, ACCEL_RANGE_4G, ACCEL_RANGE_8G, ACCEL_RANGE_16G
+ACCEL_RANGE = "ACCEL_RANGE_4G"     # default = ±4 g
+
+# Choose ONE of the gyroscope ranges (driver constants listed below)
+#   GYRO_RANGE_125_DPS, GYRO_RANGE_250_DPS, GYRO_RANGE_500_DPS,
+#   GYRO_RANGE_1000_DPS, GYRO_RANGE_2000_DPS
+GYRO_RANGE  = "GYRO_RANGE_250_DPS" # default = ±250 °/s
 
 # --------------------------------------------------------------
 # 2️⃣  Command‑line arguments
@@ -143,12 +156,45 @@ i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
 print("[INFO] Creating BNO085 driver (I2C) …")
 bno = adafruit_bno08x.i2c.BNO08X_I2C(i2c)
 
-# Enable the single report the user asked for and set its maximum period
+# ----- 6a️⃣  Set user‑requested accelerometer range --------------------
+ACCEL_RANGE_MAP = {
+    "ACCEL_RANGE_2G":  adafruit_bno08x.ACCEL_RANGE_2G,
+    "ACCEL_RANGE_4G":  adafruit_bno08x.ACCEL_RANGE_4G,
+    "ACCEL_RANGE_8G":  adafruit_bno08x.ACCEL_RANGE_8G,
+    "ACCEL_RANGE_16G": adafruit_bno08x.ACCEL_RANGE_16G,
+}
+if ACCEL_RANGE not in ACCEL_RANGE_MAP:
+    sys.exit(f"[ERROR] Invalid ACCEL_RANGE '{ACCEL_RANGE}'. Choose from {list(ACCEL_RANGE_MAP)}")
+bno.set_accelerometer_range(ACCEL_RANGE_MAP[ACCEL_RANGE])
+
+# ----- 6b️⃣  Set user‑requested gyroscope range -------------------------
+GYRO_RANGE_MAP = {
+    "GYRO_RANGE_125_DPS":  adafruit_bno08x.GYRO_RANGE_125_DPS,
+    "GYRO_RANGE_250_DPS":  adafruit_bno08x.GYRO_RANGE_250_DPS,
+    "GYRO_RANGE_500_DPS":  adafruit_bno08x.GYRO_RANGE_500_DPS,
+    "GYRO_RANGE_1000_DPS": adafruit_bno08x.GYRO_RANGE_1000_DPS,
+    "GYRO_RANGE_2000_DPS": adafruit_bno08x.GYRO_RANGE_2000_DPS,
+}
+if GYRO_RANGE not in GYRO_RANGE_MAP:
+    sys.exit(f"[ERROR] Invalid GYRO_RANGE '{GYRO_RANGE}'. Choose from {list(GYRO_RANGE_MAP)}")
+bno.set_gyroscope_range(GYRO_RANGE_MAP[GYRO_RANGE])
+
+# ----- 6c️⃣  Enable the single report the user asked for -----------------
 bno.enable_feature(REPORT_TYPE)
 bno.set_report_period(REPORT_TYPE, REPORT_PERIOD_US)
 
 # --------------------------------------------------------------
-# 7️⃣  Open a fresh log file (auto‑named by start time & measurement)
+# 7️⃣  Print the configured ranges (so the user can see them)
+# --------------------------------------------------------------
+# Helper to translate the constant back to a human‑readable string
+def _range_to_str(const):
+    return const.split("_")[-1] if "_" in const else const
+
+print(f"[INFO] Accelerometer range set to ±{_range_to_str(ACCEL_RANGE)} g")
+print(f"[INFO] Gyroscope range set to ±{_range_to_str(GYRO_RANGE)} °/s")
+
+# --------------------------------------------------------------
+# 8️⃣  Open a fresh log file (auto‑named by start time & measurement)
 # --------------------------------------------------------------
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 log_path = _make_log_path()
@@ -156,7 +202,7 @@ log_file, log_writer = _open_log_file(log_path)
 print(f"[INFO] Logging {MEAS_NAME.upper()} data to {log_path}")
 
 # --------------------------------------------------------------
-# 8️⃣  Sample‑rate statistics (updated every 0.4 s)
+# 9️⃣  Sample‑rate statistics (updated every 0.4 s)
 # --------------------------------------------------------------
 sample_times = collections.deque(maxlen=2000)   # store recent timestamps
 LAST_RATE_PRINT = time.time()
@@ -181,7 +227,7 @@ def _maybe_print_rate():
         LAST_RATE_PRINT = now
 
 # --------------------------------------------------------------
-# 9️⃣  Plot set‑up (only if USE_PLOT is True)
+# 🔟  Plot set‑up (only if USE_PLOT is True)
 # --------------------------------------------------------------
 if USE_PLOT:
     plt.style.use("seaborn-v0_8-darkgrid")
@@ -208,14 +254,14 @@ if USE_PLOT:
     line3, = ax.plot([], [], label=f"{MEAS_NAME[0].upper()}3", color="#5555ff")
     ax.legend(loc="upper right")
 else:
-    # We still need a reference start‑time for timestamps.
+    # Still need a reference start‑time for timestamps.
     time_vals = None
 
 start_time = time.time()           # for timestamps (and plot X‑axis if used)
 run_start   = start_time           # for the optional duration timer
 
 # --------------------------------------------------------------
-# 🔟  Graceful cleanup helpers
+# 1️⃣1️⃣  Graceful cleanup helpers
 # --------------------------------------------------------------
 def _cleanup_and_exit():
     """Flush/close the log file, close the plot (if any), and exit."""
