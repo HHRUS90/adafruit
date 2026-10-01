@@ -16,6 +16,7 @@ chmod +x bno085_uart_logger.py
 
 -Activate the virtual environment you created earlier (if you closed the terminal):
 source ~/bno085-env/bin/activate
+source ~/env/bin/activate <- AI said to use this one and not the one on previous line! This will prevent us from reinstalling packages everytime the Pi is rebooted
 
 -Execute the script:
 ./bno085_uart_logger.py
