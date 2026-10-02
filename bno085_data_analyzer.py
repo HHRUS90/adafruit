@@ -104,10 +104,13 @@ def find_transient_window(df, active_fields, sigma_thresh, cooldown_seconds, sof
     end_time = df['time_seconds'].iloc[-1]
     
     for idx in range(start_idx, len(df)):
-        # Check if following window stays within limits
+        # Inspect a prospective sliding window of frames forward
         window = transient_active.iloc[idx : idx + cooldown_frames]
+        
+        # If the window is full length and contains ZERO deviations,
+        # the transient ended exactly at the START of this calm window (the current idx)
         if len(window) >= cooldown_frames and not window.any():
-            end_time = df['time_seconds'].iloc[idx]
+            end_time = df['time_seconds'].iloc[idx]  # <-- FIX: Capture the drop moment, not the end of the wait
             break
 
     return start_time, end_time
@@ -142,14 +145,19 @@ def analyze_data():
         print("[ERROR] No valid BNO085 sensor headers recognized in file.")
         sys.exit(1)
         
-    # Collate all active column names for vector mapping
+    # Collate active column names, excluding magnetometer from the trigger list
     all_active_fields = []
     for s_name in active_sensors:
-        all_active_fields.extend(sensor_configs[s_name]['fields'])
+        if s_name != "mag":  # <-- EXCLUDE MAGNETOMETER OVERLAY FROM TRIGGER MATH
+            all_active_fields.extend(sensor_configs[s_name]['fields'])
+
+    # Fallback to prevent crash if running ONLY on magnetometer data
+    if not all_active_fields:
+        for s_name in active_sensors:
+            all_active_fields.extend(sensor_configs[s_name]['fields'])
 
     transient_detected = False
     t_start, t_end = None, None
-    plot_start, plot_end = 0.0, total_duration
 
     # Execute Slicing Window Calculations if requested
     if args.transient:
