@@ -2,7 +2,7 @@
 """
 bno085_data_analyzer.py – Parse BNO085 telemetry files, calculate true ODR
 vs software loop speed, evaluate min/max metrics, and auto-export artifacts.
-Supports rolling window transient window slicing.
+Natively automates transient window detection using hardware noise floors.
 """
 
 import sys
@@ -13,6 +13,14 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+
+# --------------------------------------------------------------
+# 1️⃣  USER SETTINGS
+# --------------------------------------------------------------
+# Time padding in seconds to include before and after the transient window
+# e.g., 0.500 = 500 milliseconds padding
+TRANSIENT_PADDING_SEC = 0.200  
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze BNO085 logged telemetry data.")
@@ -25,19 +33,7 @@ def parse_args():
     parser.add_argument(
         "--transient",
         action="store_true",
-        help="Crop data analysis and plot layout to the specific transient window frame."
-    )
-    parser.add_argument(
-        "--sigma",
-        type=float,
-        default=3.0,
-        help="Standard deviation multiplier threshold used to detect transient bounds (default: 3.0)."
-    )
-    parser.add_argument(
-        "--cooldown",
-        type=float,
-        default=3.0,
-        help="Consecutive seconds data must rest within baseline limits to conclude transient (default: 3.0)."
+        help="Crop data analysis and plot layout to the automatically detected transient window frame."
     )
     return parser.parse_args()
 
@@ -65,52 +61,54 @@ def get_target_file(requested_file):
     print(f"[INFO] Auto-detected newest log file: {newest_file.name}")
     return newest_file
 
-def find_transient_window(df, active_fields, sigma_thresh, cooldown_seconds, software_rate):
+def find_transient_window_automated(df, active_fields, software_rate):
     """
-    Finds the transient bounds across all active sensor fields.
-    Uses the initial 1.5 seconds as a stable baseline window.
+    Natively detects transient start and endpoints using standardized BNO085 
+    hardware noise floors to eliminate user configurations.
     """
-    # Use the first 1.5 seconds of data to compute baseline mean and std
+    # Grab initial 1.5 seconds to establish basic ambient means
     baseline_rows = int(1.5 * software_rate)
     if baseline_rows >= len(df) or baseline_rows < 5:
         baseline_rows = min(50, len(df) // 5)
         
     df_base = df.iloc[:baseline_rows]
-    
     means = {f: df_base[f].mean() for f in active_fields}
-    stds = {f: df_base[f].std() for f in active_fields}
     
-    # Avoid zero division errors for stationary datasets
+    # Establish strict physical noise thresholds based on sensor engineering profiles
+    thresholds = {}
     for f in active_fields:
-        if stds[f] < 1e-6:
-            stds[f] = 1e-4
+        if "accel" in f:
+            thresholds[f] = 0.15  # 0.15 m/s² physical deviation cap (~15 mg)
+        elif "gyro" in f:
+            thresholds[f] = 0.05  # 0.025 rad/s physical deviation cap
+        else:
+            thresholds[f] = 1.0   # Magnetometer fallback cap
 
-    # Calculate absolute deviations out of baseline bounds
+    # Map transient activity mask
     transient_active = pd.Series(False, index=df.index)
     for f in active_fields:
         deviation = (df[f] - means[f]).abs()
-        transient_active |= (deviation >= (sigma_thresh * stds[f]))
+        transient_active |= (deviation >= thresholds[f])
 
-    # Find the very first row where deviation breaches limits
     breach_indices = df.index[transient_active]
     if breach_indices.empty:
         return None, None
 
+    # Transient start index
     start_idx = breach_indices[0]
     start_time = df.loc[start_idx, 'time_seconds']
 
-    # Cooldown verification loop
-    cooldown_frames = int(cooldown_seconds * software_rate)
+    # Auto-adjust the verification window based on your actual bus logging rate
+    # Needs to see steady data for roughly 0.75 seconds to declare a physical rest state
+    cooldown_frames = int(0.75 * software_rate)
     end_time = df['time_seconds'].iloc[-1]
     
-    for idx in range(start_idx, len(df)):
-        # Inspect a prospective sliding window of frames forward
+    for idx in range(start_idx, len(df) - cooldown_frames):
         window = transient_active.iloc[idx : idx + cooldown_frames]
         
-        # If the window is full length and contains ZERO deviations,
-        # the transient ended exactly at the START of this calm window (the current idx)
-        if len(window) >= cooldown_frames and not window.any():
-            end_time = df['time_seconds'].iloc[idx]  # <-- FIX: Capture the drop moment, not the end of the wait
+        # If the sensor signals are flat for the lookahead period, the event ended here
+        if not window.any():
+            end_time = df['time_seconds'].iloc[idx]
             break
 
     return start_time, end_time
@@ -145,38 +143,37 @@ def analyze_data():
         print("[ERROR] No valid BNO085 sensor headers recognized in file.")
         sys.exit(1)
         
-    # Collate active column names, excluding magnetometer from the trigger list
+    # Exclude magnetometer from the automated tracking engine
     all_active_fields = []
     for s_name in active_sensors:
-        if s_name != "mag":  # <-- EXCLUDE MAGNETOMETER OVERLAY FROM TRIGGER MATH
+        if s_name != "mag":  
             all_active_fields.extend(sensor_configs[s_name]['fields'])
 
-    # Fallback to prevent crash if running ONLY on magnetometer data
     if not all_active_fields:
         for s_name in active_sensors:
             all_active_fields.extend(sensor_configs[s_name]['fields'])
 
     transient_detected = False
     t_start, t_end = None, None
+    plot_start, plot_end = 0.0, total_duration
 
-    # Execute Slicing Window Calculations if requested
     if args.transient:
-        t_start, t_end = find_transient_window(
-            df, all_active_fields, args.sigma, args.cooldown, software_loop_rate
-        )
+        t_start, t_end = find_transient_window_automated(df, all_active_fields, software_loop_rate)
         if t_start is not None and t_end is not None:
             transient_detected = True
             transient_duration = t_end - t_start
-            # Expand analytical bounds (1 second before, 2 seconds after)
-            plot_start = max(0.0, t_start - 1.0)
-            plot_end = min(total_duration, t_end + 2.0)
-            # Crop data framework down to slice bounds
+            
+            # DYNAMIC FIX: Symmetrically apply user setting variables to historical windows
+            plot_start = max(0.0, t_start - TRANSIENT_PADDING_SEC)
+            plot_end = min(total_duration, t_end + TRANSIENT_PADDING_SEC)
+            
             df_cropped = df[(df['time_seconds'] >= plot_start) & (df['time_seconds'] <= plot_end)].copy()
         else:
-            print("[WARNING] Transient window not found with current settings. Defaulting to full duration.")
+            print("[WARNING] No transient burst found violating hardware noise profiles. Showing full file.")
             df_cropped = df.copy()
     else:
         df_cropped = df.copy()
+
 
     # Set up output directories
     output_dir = Path.cwd() / "analysis_output"
@@ -196,14 +193,14 @@ def analyze_data():
     info_lines.append(f"Software Logging Speed (Loop Rate): {software_loop_rate:.1f} Hz")
     
     if args.transient:
-        info_lines.append(f"Transient Mode:    ENABLED (Sigma={args.sigma}, Cooldown={args.cooldown}s)")
+        info_lines.append("Transient Mode:    ENABLED (Physics-Driven Noise Floor Automation)")
         if transient_detected:
             info_lines.append(f"Transient Start:   {t_start:.3f} seconds")
             info_lines.append(f"Transient End:     {t_end:.3f} seconds")
             info_lines.append(f"Transient Length:  {transient_duration:.3f} seconds")
             info_lines.append(f"Cropped Plot Range: {plot_start:.3f}s to {plot_end:.3f}s")
         else:
-            info_lines.append("Transient Length:  NOT DETECTED (No breach found Outside Baseline)")
+            info_lines.append("Transient Length:  NOT DETECTED (Signal stayed completely inside noise floor)")
     else:
         info_lines.append("Transient Mode:    DISABLED (Full file window analyzed)")
         
@@ -211,13 +208,11 @@ def analyze_data():
     info_lines.append(" SENSOR FREQUENCY & METRICS BREAKDOWN (CROP SCOPE)")
     info_lines.append("-" * 60)
     
-    # 2. Evaluate Performance and Metrics across cropped frame
     for s_name in active_sensors:
         conf = sensor_configs[s_name]
         fields = conf['fields']
         unit = conf['unit']
         
-        # Calculate true rate metrics over full duration, but ranges inside crop frame
         df_unique = df.drop_duplicates(subset=fields)
         true_sample_rate = len(df_unique) / total_duration if total_duration > 0 else 0.0
         
@@ -236,7 +231,6 @@ def analyze_data():
     with open(info_out_path, "w", encoding="utf-8") as text_file:
         text_file.write(report_text)
         
-    # 3. Handle Matplotlib Visualization Setup
     num_plots = len(active_sensors)
     fig, axes = plt.subplots(num_plots, 1, sharex=True, figsize=(10, 3 * num_plots + 1))
     if num_plots == 1:
@@ -257,19 +251,14 @@ def analyze_data():
         ax.set_xlim(plot_start, plot_end)
         ax.grid(True, linestyle="--", alpha=0.6)
         
-        # Draw lines AND apply a shaded background patch for the active transient window
         if transient_detected:
-            # Shaded transparent background block spanning the transient runtime
             ax.axvspan(t_start, t_end, color="#9b59b6", alpha=0.15, label="Transient Active" if idx == 0 else "")
-            
-            # Boundary markers
             ax.axvline(t_start, color="purple", linestyle=":", alpha=0.8, label="Transient Start" if idx == 0 else "")
             ax.axvline(t_end, color="darkorange", linestyle=":", alpha=0.8, label="Transient End" if idx == 0 else "")
             
         if idx == 0:
             ax.legend(loc="upper right", frameon=True)
 
-            
     axes[-1].set_xlabel("Time elapsed (seconds)")
     plt.tight_layout()
     
@@ -294,3 +283,4 @@ def analyze_data():
     
 if __name__ == "__main__":
     analyze_data()
+
