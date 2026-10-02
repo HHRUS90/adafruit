@@ -1,0 +1,36 @@
+============================================================
+ BNO085 TELEMETRY ANALYSIS REPORT: bno085_i2c_all_20261002_124420.csv
+============================================================
+File Target:       /home/survtest/fisica/logs/bno085_i2c_all_20261002_124420.csv
+Total Log Records: 5156 frames
+Total Duration:    11.779 seconds
+Software Logging Speed (Loop Rate): 437.7 Hz
+Transient Mode:    ENABLED (Sigma=10.0, Cooldown=1.0s)
+Transient Start:   1.124 seconds
+Transient End:     9.633 seconds
+Transient Length:  8.509 seconds
+Cropped Plot Range: 0.124s to 11.633s
+
+------------------------------------------------------------
+ SENSOR FREQUENCY & METRICS BREAKDOWN (CROP SCOPE)
+------------------------------------------------------------
+
+● Accelerometer Performance Profile:
+  True Hardware Sample Rate (ODR): 83.5 Hz
+  Range [X-Axis]: Min =     -9.4570 m/s² | Max =      9.8555 m/s²
+  Range [Y-Axis]: Min =    -12.1328 m/s² | Max =     10.0469 m/s²
+  Range [Z-Axis]: Min =      0.1055 m/s² | Max =     20.7930 m/s²
+
+● Gyroscope Performance Profile:
+  True Hardware Sample Rate (ODR): 261.5 Hz
+  Range [X-Axis]: Min =     -5.1328 rad/s | Max =      8.1367 rad/s
+  Range [Y-Axis]: Min =     -3.1406 rad/s | Max =      3.2305 rad/s
+  Range [Z-Axis]: Min =     -5.4512 rad/s | Max =      4.4551 rad/s
+
+● Magnetometer Performance Profile:
+  True Hardware Sample Rate (ODR): 80.6 Hz
+  Range [X-Axis]: Min =    -17.0625 μT | Max =      9.4375 μT
+  Range [Y-Axis]: Min =    -28.8750 μT | Max =     10.2500 μT
+  Range [Z-Axis]: Min =    -41.4375 μT | Max =    -28.3750 μT
+
+============================================================
