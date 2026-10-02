@@ -6,18 +6,9 @@ Features
 --------
 * Raspberry‑Pi hardware I²C (SDA = GPIO2, SCL = GPIO3) at 400 kHz.
 * User selects ONE measurement (accelerometer, gyroscope or magnetometer) via
-  a command‑line flag.  The script enables **only that report** and sets the
-  report period to the maximum rate allowed by the datasheet:
-      – Accel  : 500 Hz  (2 ms → 2 000 µs)
-      – Gyro   : 400 Hz  (2.5 ms → 2 500 µs)
-      – Mag    : 100 Hz  (10 ms → 10 000 µs)
-* Auto‑saves to CSV *or* TSV (toggle with the USE_CSV constant at the top).
-* Optional live Matplotlib plot – **enabled only with `--plot`**.
-* Optional `--duration <seconds>` argument to stop automatically.
-* Log files are named `<measurement>_YYYYMMDD_HHMMSS.<ext>` (e.g.
-  `bno085_i2c_accel_20260928_145408.csv`).
-* Every 400 ms the script can print the measured sample‑rate (Hz);
-  disable it with `--no-rate`.
+  a command‑line flag.
+* Auto‑saves to CSV *or* TSV.
+* Live Matplotlib plot – transitions seamlessly to headless mode when closed.
 * Graceful cleanup on Ctrl‑C, SIGTERM, or timer expiry.
 """
 
@@ -44,7 +35,7 @@ import matplotlib.animation as animation
 # 1️⃣  USER SETTINGS
 # --------------------------------------------------------------
 I2C_FREQUENCY = 400_000            # 400 kHz – Pi fast‑mode (max supported)
-MAX_SECONDS   = 30                 # seconds shown on the live plot (if enabled)
+MAX_SECONDS   = 30                 # seconds showed on the live plot (if enabled)
 LOG_ROOT      = Path.cwd() / "logs"
 USE_CSV       = True               # CSV → .csv, False → TSV
 
@@ -137,6 +128,9 @@ start_time = time.time()
 run_start = start_time
 time_vals, v1_vals, v2_vals, v3_vals = [], [], [], []
 
+# Global switch flag to track window state
+PLOT_WINDOW_OPEN = True
+
 # --------------------------------------------------------------
 # 6️⃣  Cleanup and Exit Handler
 # --------------------------------------------------------------
@@ -216,7 +210,20 @@ if USE_PLOT:
     line3, = ax.plot([], [], label=f"{HEADER_FIELDS[2]}", color="#5555ff")
     ax.legend(loc="upper right")
 
+    def on_close(event):
+        """Intercepts window close event to flag transition to headless mode."""
+        global PLOT_WINDOW_OPEN
+        PLOT_WINDOW_OPEN = False
+        print("\n[INFO] Plot window closed. Switching seamlessly to high-throughput headless logging...")
+
+    # Bind the close event callback onto the figure manager
+    fig.canvas.mpl_connect('close_event', on_close)
+
     def update_plot(frame):
+        # Stop updates if window closure flag was handled externally
+        if not PLOT_WINDOW_OPEN:
+            return line1, line2, line3
+
         # Read up to 5 samples per frame to clear the I2C cache without trapping the UI thread
         for _ in range(5):
             result = get_sensor_data()
@@ -243,16 +250,17 @@ if USE_PLOT:
             line2.set_data(time_vals, v2_vals)
             line3.set_data(time_vals, v3_vals)
             ax.set_xlim(max(0, current_now - MAX_SECONDS), current_now + 0.5)
-
-        return line1, line2, line3
-
-
+            return line1, line2, line3
+            
     # FuncAnimation natively handles the window updates and window close events
     anim = animation.FuncAnimation(fig, update_plot, interval=20, cache_frame_data=False)
     plt.show()
-
-else:
-    # Headless loop optimized for maximum data capture speeds
+        
+# --------------------------------------------------------------
+# 9️⃣ Continuous Headless Logging (Fallback / Direct Run Loop)
+# --------------------------------------------------------------
+# If --plot was used, this block is paused until the user exits the GUI.
+if not USE_PLOT or not PLOT_WINDOW_OPEN:
     print("[INFO] Running in headless mode. Press Ctrl+C to stop.")
     while True:
         get_sensor_data()
