@@ -130,3 +130,36 @@ Check the log (journal) – you should see the “Run‑time limit …” line a
 A new CSV (or TXT) file will be left in ~/logs/ with a timestamped name.
 
 If you ever want it to run indefinitely on boot, simply delete the --duration … part from the ExecStart= line and reload (systemctl daemon-reload). The script will then behave exactly like the original “run until stopped”.
+_________________________________________________
+Switching to SPI format
+
+Yes, you will need to make a few distinct changes to the script when you switch from I²C to SPI.
+The core data harvesting loop, plotting, and logging logic will remain exactly the same. However, you will need to swap out the hardware bus initialization and use the dedicated SPI interface class from the Adafruit library.
+Here are the specific code modifications you will need to make:
+## 1. Update the Imports
+You will need to import digitalio to manage the required Chip Select (CS) and Interrupt (INT) pins for SPI, and swap the library subclass.
+
+# Change this:# import adafruit_bno08x.i2c
+# To this:import digitalioimport adafruit_bno08x.spi
+
+## 2. Swap the Hardware Initialization Block
+In Section 5️⃣ Initialization of your script, you will replace the busio.I2C setup with busio.SPI.
+Unlike I²C which only needs SDA and SCL, the SH2 protocol over SPI requires 4 pins:
+
+* SCLK / MOSI / MISO: Standard SPI data lines.
+* CS (Chip Select): Selects the device.
+* INT (Interrupt): Crucial for the BNO085 to signal the Pi when new data is ready.
+
+Replace the I²C initialization block with this:
+
+print("[INFO] Initialising SPI …")# 1. Initialize the standard SPI bus (Default pins: SCLK=GPIO11, MOSI=GPIO10, MISO=GPIO9)spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
+# 2. Set up Chip Select (CS) Pin (e.g., GPIO8 / CE0)cs = digitalio.DigitalInOut(board.CE0)
+# 3. Set up the Interrupt (INT) Pin (Pick an available GPIO, e.g., GPIO25)# This pin is mandatory for Adafruit's BNO08x SPI driver to sync data transfersint_pin = digitalio.DigitalInOut(board.D25)
+# 4. Initialize the sensor using the SPI subclassbno = adafruit_bno08x.spi.BNO08X_SPI(spi, cs, int_pin)
+
+## 3. Adjust the Bus Frequency (Optional but Recommended)
+In your I²C script, you have I2C_FREQUENCY = 400_000. When you switch to SPI, you can safely remove this variable or repurpose it.
+The Adafruit SPI driver defaults to a safe, stable clock speed (typically 3 MHz), which is already 7.5× faster than your current I²C cap and more than fast enough to comfortably saturate the maximum hardware frame rates of all three sensors simultaneously.
+When you are ready to prepare for the hardware transition, would you like me to provide a physical wiring diagram mapping the BNO085 pins to the Raspberry Pi GPIO header for SPI?
+
+
