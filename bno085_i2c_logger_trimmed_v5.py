@@ -6,9 +6,18 @@ Features
 --------
 * Raspberry‑Pi hardware I²C (SDA = GPIO2, SCL = GPIO3) at 400 kHz.
 * User selects ONE measurement (accelerometer, gyroscope or magnetometer) via
-  a command‑line flag.
-* Auto‑saves to CSV *or* TSV.
-* Live Matplotlib plot – fixed to render correctly using FuncAnimation.
+  a command‑line flag.  The script enables **only that report** and sets the
+  report period to the maximum rate allowed by the datasheet:
+      – Accel  : 500 Hz  (2 ms → 2 000 µs)
+      – Gyro   : 400 Hz  (2.5 ms → 2 500 µs)
+      – Mag    : 100 Hz  (10 ms → 10 000 µs)
+* Auto‑saves to CSV *or* TSV (toggle with the USE_CSV constant at the top).
+* Optional live Matplotlib plot – **enabled only with `--plot`**.
+* Optional `--duration <seconds>` argument to stop automatically.
+* Log files are named `<measurement>_YYYYMMDD_HHMMSS.<ext>` (e.g.
+  `bno085_i2c_accel_20260928_145408.csv`).
+* Every 400 ms the script can print the measured sample‑rate (Hz);
+  disable it with `--no-rate`.
 * Graceful cleanup on Ctrl‑C, SIGTERM, or timer expiry.
 """
 
