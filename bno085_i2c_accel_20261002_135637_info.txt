@@ -1,0 +1,24 @@
+============================================================
+ BNO085 TELEMETRY ANALYSIS REPORT: bno085_i2c_accel_20261002_135637.csv
+============================================================
+File Target:       /home/survtest/fisica/logs/bno085_i2c_accel_20261002_135637.csv
+Total Log Records: 2610 frames
+Total Duration:    5.117 seconds
+Software Logging Speed (Loop Rate): 510.0 Hz
+Transient Mode:    ENABLED (Physics-Driven Noise Floor Automation)
+Transient Start:   3.499 seconds
+Transient End:     3.909 seconds
+Transient Length:  0.409 seconds
+Cropped Plot Range: 3.299s to 4.109s
+
+------------------------------------------------------------
+ SENSOR FREQUENCY & METRICS BREAKDOWN (CROP SCOPE)
+------------------------------------------------------------
+
+● Accelerometer Performance Profile:
+  True Hardware Sample Rate (ODR): 42.6 Hz
+  Range [X-Axis]: Min =     -6.1211 m/s² | Max =      2.2266 m/s²
+  Range [Y-Axis]: Min =     -4.6992 m/s² | Max =      2.2344 m/s²
+  Range [Z-Axis]: Min =      2.2109 m/s² | Max =     21.1367 m/s²
+
+============================================================
