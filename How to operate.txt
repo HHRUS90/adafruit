@@ -161,5 +161,20 @@ print("[INFO] Initialising SPI …")# 1. Initialize the standard SPI bus (Defaul
 In your I²C script, you have I2C_FREQUENCY = 400_000. When you switch to SPI, you can safely remove this variable or repurpose it.
 The Adafruit SPI driver defaults to a safe, stable clock speed (typically 3 MHz), which is already 7.5× faster than your current I²C cap and more than fast enough to comfortably saturate the maximum hardware frame rates of all three sensors simultaneously.
 When you are ready to prepare for the hardware transition, would you like me to provide a physical wiring diagram mapping the BNO085 pins to the Raspberry Pi GPIO header for SPI?
+_____________________________________________________________
+Remoting into RaspBerry Pi
+Put this in Pi command prompt
+sudo nmcli connection modify "Wired connection 1" ipv4.method link-local
+sudo nmcli connection up "Wired connection 1"
+
+Put this in Windows CMD prompt:
+ssh username@raspberrypi.local
+
+To control remotely:
+cd /home/survtest/fisica
+source ~/env/bin/activate
+python3 bno085_i2c_logger_trimmed_vX.py
+python3 bno085_data_analyzer.py
+
 
 
